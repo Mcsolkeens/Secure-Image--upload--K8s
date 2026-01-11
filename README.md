@@ -1,142 +1,259 @@
-# Kubernetes Deployment Guide
-
-This directory contains Kubernetes manifests to deploy the microservices application to a Kubernetes cluster.
-
-## Prerequisites
-
-- Kubernetes cluster (minikube, kind, or cloud provider)
-- kubectl configured to connect to your cluster
-- Docker for building images
-
-## Quick Start
-
-### 1. Build Docker Images
-```bash
-chmod +x k8s/build-images.sh
-./k8s/build-images.sh
-```
-
-### 2. Deploy to Kubernetes
-```bash
-chmod +x k8s/deploy.sh
-./k8s/deploy.sh
-```
-
-### 3. Access the Application
-```bash
-# Port forward to access locally
-kubectl port-forward service/api-gateway 8081:8081
-
-# Then visit: http://localhost:8081
-```
-
-### 4. Clean Up
-```bash
-chmod +x k8s/cleanup.sh
-./k8s/cleanup.sh
-```
-
-## Manifest Files
-
-### `00-common.yaml`
-- **ConfigMap**: Shared configuration for all services
-- **PersistentVolume**: Storage for uploaded files
-- **PersistentVolumeClaim**: Storage claim for upload service
-
-### `01-auth-service.yaml`
-- **Deployment**: Auth service with 2 replicas
-- **Service**: Internal ClusterIP service on port 8082
-- **Health Checks**: Liveness and readiness probes
-
-### `02-upload-service.yaml`
-- **Deployment**: Upload service with 2 replicas and persistent storage
-- **Service**: Internal ClusterIP service on port 8083
-- **Volume Mount**: Persistent storage for uploads
-
-### `03-api-gateway.yaml`
-- **Deployment**: API Gateway with 2 replicas
-- **Service**: LoadBalancer service for external access on port 8081
-- **Ingress**: Optional ingress configuration
 
 
-### `04-network-policies.yaml`
-- **NetworkPolicy**: Security policies restricting inter-service communication
-- Auth/Upload services only accept traffic from API gateway
-- API gateway can communicate with all services
+# 🔐 Secure Image Upload Platform on Kubernetes
 
-## Architecture in Kubernetes
+A **cloud-native, microservices-based image upload platform** built with **Go** and deployed on **Kubernetes**, with a strong emphasis on **security, least-privilege RBAC, ServiceAccount hardening, and network isolation**.
+
+This project demonstrates how to design and deploy a modern microservices application **without granting unnecessary Kubernetes API access to application workloads**.
+
+---
+
+## 🏗️ Architecture Overview
+
+The application follows a **microservices architecture** with a single external entry point.
 
 ```
 ┌─────────────────┐
-│   LoadBalancer  │ ← External Traffic
-│   (api-gateway) │
-└─────────┬───────┘
-          │
-┌─────────▼───────┐    ┌─────────────────┐    ┌─────────────────┐
-│   API Gateway   │    │   Auth Service  │    │ Upload Service  │
-│   Deployment    │───▶│   Deployment    │    │   Deployment    │
-│   (2-5 pods)    │    │   (2-10 pods)   │    │   (2-10 pods)   │
-└─────────────────┘    └─────────────────┘    └─────────┬───────┘
-                                                         │
-                                              ┌─────────▼───────┐
-                                              │ PersistentVolume│
-                                              │   (uploads)     │
-                                              └─────────────────┘
+│   Frontend      │
+│   (HTML / JS)   │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│   API Gateway   │  Port: 8081
+└────────┬────────┘
+         │
+ ┌───────┴─────────┐
+ │                 │
+ ▼                 ▼
+┌────────────┐  ┌────────────┐
+│ Auth       │  │ Upload     │
+│ Service    │  │ Service    │
+│ Port 8082  │  │ Port 8083  │
+└────────────┘  └────────────┘
 ```
 
-## Features
+---
 
-- **High Availability**: Multiple replicas for each service
-- **Auto-Scaling**: Automatic scaling based on resource usage
-- **Persistent Storage**: Uploaded files survive pod restarts
-- **Security**: Network policies restrict communication
-- **Health Checks**: Kubernetes monitors service health
-- **Load Balancing**: Traffic distributed across replicas
+## 🔧 Services
 
-## Monitoring
+| Service            | Description                                    |
+| ------------------ | ---------------------------------------------- |
+| **API Gateway**    | Routes requests, serves frontend, handles CORS |
+| **Auth Service**   | User registration, login, JWT issuance         |
+| **Upload Service** | Secure image uploads and static file serving   |
+| **Shared Module**  | Common utilities and JWT validation            |
+
+---
+
+## 🔐 Security Design (Key Focus)
+
+This project intentionally applies **defense-in-depth Kubernetes security controls**:
+
+### ✔ ServiceAccount Hardening
+
+* Dedicated ServiceAccount per microservice
+* `automountServiceAccountToken: false`
+* No application pod has Kubernetes API credentials
+
+### ✔ Least Privilege RBAC
+
+* **No Roles or RoleBindings created**
+* Workloads do not access the Kubernetes API
+* If no API access is required, **RBAC = none**
+
+### ✔ Default ServiceAccount Locked Down
+
+* Prevents accidental privilege inheritance
+* Forces explicit identity assignment
+
+### ✔ Secrets Management
+
+* JWT secret stored in **Kubernetes Secret**
+* Configuration stored in **ConfigMap**
+* Designed to be easily replaced by Vault / AWS Secrets Manager
+
+### ✔ Network Policies (Zero Trust)
+
+* Backend services accept traffic **only** from API Gateway
+* No lateral pod-to-pod communication
+* Explicit ingress and egress rules
+
+### ✔ Pod Security Standards (PSS)
+
+* Namespace enforces `restricted` policy
+* Prevents privileged containers
+* Blocks privilege escalation
+
+---
+
+## 📂 Repository Structure
+
+```
+k8s/
+├── 00-namespace-pss.yaml
+├── 01-common.yaml
+├── 02-secrets.yaml
+├── 03-auth.yaml
+├── 04-serviceaccounts.yaml #sperate the SA account see repo for help
+├── 05-api.yaml
+├── 06-upload-services.yaml
+├── 07-network-policies.yaml
+```
+
+---
+
+## 🚀 Deployment Guide
+
+### 1️⃣ Prerequisites
+
+* Go 1.21+
+* Docker
+* kubectl
+* Kubernetes cluster (Minikube, kind, or cloud)
+
+Verify:
 
 ```bash
-# Check pod status
+kubectl version --client
+docker --version
+```
+
+---
+
+### 2️⃣ Create / Start Kubernetes Cluster
+
+Example (Minikube):
+
+```bash
+minikube start
+```
+
+---
+
+### 3️⃣ Deploy Kubernetes Manifests (Order Matters)
+
+```bash
+kubectl apply -f k8s/00-namespace-pss.yaml
+kubectl apply -f k8s/01-config.yaml
+kubectl apply -f k8s/02-secrets.yaml
+kubectl apply -f k8s/03-storage.yaml
+kubectl apply -f k8s/04-serviceaccounts.yaml
+kubectl apply -f k8s/05-deployments.yaml
+kubectl apply -f k8s/06-services.yaml
+kubectl apply -f k8s/07-network-policies.yaml
+```
+
+---
+
+### 4️⃣ Verify Deployment
+
+```bash
 kubectl get pods
-
-# Check services
 kubectl get services
+```
 
-# Check autoscaling status
-kubectl get hpa
+View logs:
 
-# View logs
+```bash
 kubectl logs -f deployment/api-gateway
-kubectl logs -f deployment/auth-service
-kubectl logs -f deployment/upload-service
+```
 
-# Check resource usage
+---
+
+### 5️⃣ Access the Application (Local)
+
+```bash
+kubectl port-forward service/api-gateway 8081:8081
+```
+
+Open:
+
+```
+http://localhost:8081
+```
+
+---
+
+## 🔍 Security Validation (Important)
+
+### Verify ServiceAccount isolation
+
+```bash
+kubectl describe pod <pod-name> | grep ServiceAccount
+```
+
+### Verify Kubernetes API access is blocked
+
+```bash
+kubectl exec -it <pod-name> -- sh
+curl https://kubernetes.default.svc
+```
+
+Expected result:
+
+```
+Unauthorized
+```
+
+✔ Confirms no API credentials
+✔ Confirms least-privilege enforcement
+
+---
+
+## 📊 Autoscaling & Observability
+
+* Horizontal Pod Autoscaler (HPA) enabled
+* Kubernetes-native health checks
+* Resource requests and limits defined
+
+```bash
+kubectl get hpa
 kubectl top pods
 ```
 
-## Troubleshooting
+---
 
-### Pods not starting
-```bash
-kubectl describe pod <pod-name>
-kubectl logs <pod-name>
-```
+## 🧠 Design Philosophy
 
-### Service not accessible
-```bash
-kubectl get endpoints
-kubectl describe service api-gateway
-```
+> **Running in Kubernetes does not mean applications should talk to Kubernetes.**
 
-### Storage issues
-```bash
-kubectl get pv
-kubectl get pvc
-kubectl describe pvc uploads-pvc
-```
+This project deliberately separates:
 
-### Network issues
-```bash
-kubectl get networkpolicies
-kubectl describe networkpolicy <policy-name>
-```
+* **Cluster orchestration** → kubelet & control plane
+* **Application logic** → microservices with no API access
+
+This dramatically reduces the attack surface.
+
+---
+
+## 🎯 Learning Outcomes
+
+* Secure Kubernetes workload identity
+* ServiceAccount and RBAC fundamentals
+* NetworkPolicy-based zero trust
+* Pod Security Standards enforcement
+* Production-ready manifest organization
+
+---
+
+## 🔮 Future Enhancements
+
+* External secrets integration (Vault / AWS Secrets Manager)
+* Ingress TLS with cert-manager
+* OpenTelemetry tracing
+* OPA/Gatekeeper policy enforcement
+
+---
+
+## 📄 License
+
+MIT License
+
+---
+
+## ⭐ Final Note
+
+This project intentionally prioritizes **security correctness over convenience** and demonstrates how to deploy microservices in Kubernetes **without unnecessary privileges**.
+
+
