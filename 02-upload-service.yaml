@@ -1,0 +1,87 @@
+# Upload Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: upload-service
+  labels:
+    app: upload-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: upload-service
+  template:
+    metadata:
+      labels:
+        app: upload-service
+    spec:
+    
+      # Pod-level security context
+      securityContext:
+        runAsNonRoot: true      # Prevent running as root
+        runAsUser: 1000         # Non-root UID
+        runAsGroup: 3000        # Primary GID
+        fsGroup: 2000            # Filesystem group for mounted volumes
+        seccompProfile:         #systecall to kernel allowed to default
+          type: RuntimeDefault
+
+      containers:
+      - name: upload-service
+        image: daasnigeria/daasrepo:upload-service
+        imagePullPolicy: Always  # Pull from registry
+        # Container-level security context
+        securityContext:
+          allowPrivilegeEscalation: false      # Prevent privilege escalation
+          readOnlyRootFilesystem: true         #Make root filesystem read-only
+          capabilities:
+            drop:                              #Drop all capabilities
+              - ALL
+
+        ports:
+        - containerPort: 8083
+        env:
+        - name: GIN_MODE
+          value: "release"
+        envFrom:
+        - configMapRef:
+            name: app-config
+        - secretRef:
+            name: app-secrets
+        volumeMounts:
+        - name: uploads-storage
+          mountPath: /root/uploads
+        resources:
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          tcpSocket:
+            port: 8083
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 8083
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: uploads-storage
+        persistentVolumeClaim:
+          claimName: uploads-pvc
+---
+# Upload Service Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: upload-service
+spec:
+  selector:
+    app: upload-service
+  ports:
+  - protocol: TCP
+    port: 8083
+    targetPort: 8083
+  type: ClusterIP

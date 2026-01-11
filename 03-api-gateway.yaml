@@ -1,0 +1,99 @@
+# API Gateway Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  labels:
+    app: api-gateway
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-gateway
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+     # Pod-level security context
+      securityContext:
+        runAsNonRoot: true      # Prevent running as root
+        runAsUser: 1000         # Non-root UID
+        runAsGroup: 3000        # Primary GID
+        fsGroup: 2000            # Filesystem group for mounted volumes
+        seccompProfile:         #systecall to kernel allowed to default
+          type: RuntimeDefault
+
+      containers:
+      - name: api-gateway
+        image: daasnigeria/daasrepo:api-gateway
+        imagePullPolicy: Always
+        # Container-level security context
+        securityContext:
+          allowPrivilegeEscalation: false      # Prevent privilege escalation
+          readOnlyRootFilesystem: true         #Make root filesystem read-only
+          capabilities:
+            drop:                              #Drop all capabilities
+              - ALL
+        ports:
+        - containerPort: 8081
+        env:
+        - name: GIN_MODE
+          value: "release"
+        envFrom:
+        - configMapRef:
+            name: app-config
+        resources:
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+---
+# API Gateway Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+spec:
+  selector:
+    app: api-gateway
+  type: NodePort
+  ports:
+  - protocol: TCP
+    port: 8081
+    targetPort: 8081
+    nodePort: 30012
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-gateway-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+  - host: image-upload.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-gateway
+            port:
+              number: 8081
