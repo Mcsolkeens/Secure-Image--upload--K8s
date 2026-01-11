@@ -91,7 +91,7 @@ This project intentionally applies **defense-in-depth Kubernetes security contro
 
 ```
 k8s/
-├── 00-namespace-pss.yaml
+├── 00-pss.yaml
 ├── 01-common.yaml
 ├── 02-secrets.yaml
 ├── 03-auth.yaml
